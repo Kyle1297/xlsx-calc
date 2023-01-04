@@ -1,7 +1,5 @@
 "use strict";
 
-const { ROW } = require("xlsx-calc/src/formulas");
-
 module.exports = function UserFnExecutor(user_function) {
     var self = this;
     self.name = 'UserFn';
@@ -16,7 +14,7 @@ module.exports = function UserFnExecutor(user_function) {
             return parseInt(self.args[0].formula.name.replace(/[^0-9]/g, ''));
         }
     
-        if (args[0]?.name !== 'RefValue' && args[0]?.name !== 'Range') {
+        if (args[0].name !== 'RefValue' && args[0].name !== 'Range') {
             return new Error('#VALUE!');
         }
     

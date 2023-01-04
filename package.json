@@ -14,7 +14,7 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@formulajs/formulajs": "^2.6.3",
+    "@formulajs/formulajs": "^3.1.7",
     "mocha": "^8.3.0",
     "nyc": "^15.1.0",
     "pre-commit": "^1.2.2",

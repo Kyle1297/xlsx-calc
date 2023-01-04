@@ -3,15 +3,10 @@
 const RawValue = require('./RawValue.js');
 const Range = require('./Range.js');
 const str_2_val = require('./str_2_val.js');
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const col_str_2_int = require('./col_str_2_int.js');
-const int_2_col_str = require('./int_2_col_str.js');
-const { getErrorValueByMessage } = require('./errors')
-var exp_id = 0;
 
-function isMatrix(obj) {
-    return Array.isArray(obj) && (obj.length === 0 || Array.isArray(obj[0]));
-}
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+var exp_id = 0;
 
 module.exports = function Exp(formula) {
     var self = this;
@@ -26,35 +21,33 @@ module.exports = function Exp(formula) {
             if (Array.isArray(self.args) 
                     && self.args.length === 1
                     && self.args[0] instanceof Range) {
-                throw new Error('#VALUE!');
+                throw Error('#VALUE!');
             }
             formula.cell.v = self.calc();
-            formula.cell.t = getCellType(formula.cell.v);
-            if (isMatrix(formula.cell.v)) {
-                const array = formula.cell.v;
-                formula.cell.v = undefined;
-                let cellsName = formula.name;
-                let colAndRow = cellsName.match(/([A-Z]+)([0-9]+)/);
-                let colNumber = col_str_2_int(colAndRow[1]);
-                let rowNumber = +colAndRow[2];
-                for (let i = 0; i < array.length; i++) {
-                    const newCellNumber = rowNumber + i;
-                    for (let j = 0; j < array[i].length; j++) {
-                        const newCellValue = array[i][j];
-                        const destinationColumn = j + colNumber;
-                        const destinationCellName = int_2_col_str(destinationColumn) + newCellNumber;
-                        let cell = formula.sheet[destinationCellName];
-                        if (!cell) {
-                            cell = {};
-                            formula.sheet[destinationCellName] = cell;
-                        }
-                        applyCellValue(cell, newCellValue);
-                    }
-                }
+            if (typeof(formula.cell.v) === 'string') {
+                formula.cell.t = 's';
+            }
+            else if (typeof(formula.cell.v) === 'number') {
+                formula.cell.t = 'n';
             }
         }
         catch (e) {
-            if (!applyCellError(formula.cell, e)) {
+            var errorValues = {
+                '#NULL!': 0x00,
+                '#DIV/0!': 0x07,
+                '#VALUE!': 0x0F,
+                '#REF!': 0x17,
+                '#NAME?': 0x1D,
+                '#NUM!': 0x24,
+                '#N/A': 0x2A,
+                '#GETTING_DATA': 0x2B
+            };
+            if (errorValues[e.message] !== undefined) {
+                formula.cell.t = 'e';
+                formula.cell.w = e.message;
+                formula.cell.v = errorValues[e.message];
+            }
+            else {
                 throw e;
             }
         }
@@ -62,42 +55,6 @@ module.exports = function Exp(formula) {
             formula.status = 'done';
         }
     }
-
-    function applyCellError(cell, cellValueOrError) {
-        const error = cellValueOrError || {};
-        cell.t = 'e';
-        const errorValue = getErrorValueByMessage(error.message);
-        if (errorValue !== undefined) {
-            cell.w = error.message;
-            cell.v = errorValue;
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    function applyCellValue(cell, cellValueOrError) {
-        if (cellValueOrError instanceof Error) {
-            applyCellError(cell, cellValueOrError)
-        } else {
-            const newCellType = getCellType(cellValueOrError);
-            cell.v = cellValueOrError;
-            if (newCellType) cell.t = newCellType;
-        }
-    }
-
-    function getCellType(cellValue) {
-        if (typeof(cellValue) === 'string') {
-            return 's';
-        }
-        else if (typeof(cellValue) === 'number') {
-            return 'n';
-        }
-        else if (cellValue instanceof Error) {
-            return 'e';
-        }
-    }
-
     function isEmpty(value) {
         return value === undefined || value === null || value === "";
     }
@@ -112,7 +69,7 @@ module.exports = function Exp(formula) {
         return +self.formula.name.replace(/[^0-9]/g, '');
     }
     
-    function exec(op, args, fn) {
+    function exec(op, args, fn, isFormula) {
         for (var i = 0; i < args.length; i++) {
             if (args[i] === op) {
                 try {
@@ -123,24 +80,68 @@ module.exports = function Exp(formula) {
                     } else {
                         checkVariable(args[i - 1]);
                         checkVariable(args[i + 1]);
+                        
+                        let a = args[i - 1].calc(isFormula);
+                        let b = args[i + 1].calc(isFormula);
 
-                        let a = args[i - 1].calc();
-                        let b = args[i + 1].calc();
                         if (Array.isArray(a)) {
-                            a = a[getCurrentCellIndex() - 1][0];
+                            if (!isFormula && a.length >= getCurrentCellIndex()) {
+                                a = a[getCurrentCellIndex() - 1][0];
+                            }
+                            else if (a.length === 1 && !Array.isArray(a[0])) {
+                                a = a[0];
+                            }
+                            else if (a.length === 1 && Array.isArray(a[0] && a[0].length === 1) && Array.isArray(a[0][0])) {
+                                a[0] = a[0][0];
+                            }
                         }
                         if (Array.isArray(b)) {
-                            b = b[getCurrentCellIndex() - 1][0];
+                            if (!isFormula && b.length >= getCurrentCellIndex()) {
+                                b = b[getCurrentCellIndex() - 1][0];
+                            }
+                            else if (b.length === 1 && !Array.isArray(b[0])) {
+                                b = b[0];
+                            }
+                            else if (b.length === 1 && Array.isArray(b[0]) && b[0].length > 1 && Array.isArray(b[0][0])) {
+                                b = b[0];
+                            }
                         }
 
-                        let r = fn(a, b);
-                        args.splice(i - 1, 3, new RawValue(r));
+                        let result = [];
+                        if (Array.isArray(a) && Array.isArray(b)) {
+                            for (let i = 0; i < a.length; i++) {
+                                result.push([]);
+                                for (let j = 0; j < a[i].length; j++) {
+                                    result[i].push(fn(a[i][j], b[i][j]));
+                                }
+                            }
+                        }
+                        else if (Array.isArray(a)) {
+                            for (let i = 0; i < a.length; i++) {
+                                result.push([]);
+                                for (let j = 0; j < a[i].length; j++) {
+                                    result[i].push(fn(a[i][j], b));
+                                }
+                            }
+                        }
+                        else if (Array.isArray(b)) {
+                            for (let i = 0; i < b.length; i++) {
+                                result.push([]);
+                                for (let j = 0; j < b[i].length; j++) {
+                                    result[i].push(fn(a, b[i][j]));
+                                }
+                            }
+                        }
+                        else {
+                            result = fn(a, b);
+                        }
+                        args.splice(i - 1, 3, new RawValue(result));
                         i--;
                     }
                 }
                 catch (e) {
-                    // console.log('[Exp.js] - ' + formula.name + ': evaluating ' + formula.cell.f + '\n' + e.message);
-                    throw e;
+                    // console.log('[Exp.js] - ' + 'Sheet ' + formula.sheet_name + ', Cell ' + formula.name + ': evaluating ' + formula.cell.f + '\n' + e.message + "\n");
+                    throw e
                 }
             }
         }
@@ -175,42 +176,48 @@ module.exports = function Exp(formula) {
         }
     }
 
-    self.calc = function() {
+    self.calc = function(isFormula = false) {
         let args = self.args.concat();
         exec('^', args, function(a, b) {
             return Math.pow(+a, +b);
-        });
+        }, isFormula);
         exec_minus(args);
         exec('/', args, function(a, b) {
             if (b == 0) {
                 throw Error('#DIV/0!');
             }
             return (+a) / (+b);
-        });
+        }, isFormula);
         exec('*', args, function(a, b) {
+            if (a === "" || b === "") {
+                return new Error('#VALUE!');
+            }
             return (+a) * (+b);
-        });
+        }, isFormula);
         exec('+', args, function(a, b) {
+            if (a === "" || b === "") {
+                return new Error('#VALUE!');
+            }
             if (a instanceof Date && typeof b === 'number') {
                 b = b * MS_PER_DAY;
             }
             return (+a) + (+b);
-        });
+        }, isFormula);
         exec('&', args, function(a, b) {
             return '' + a + b;
-        });
+        }, isFormula);
         exec('<', args, function(a, b) {
             return a < b;
-        });
+        }, isFormula);
         exec('>', args, function(a, b) {
             return a > b;
-        });
+        }, isFormula);
         exec('>=', args, function(a, b) {
             return a >= b;
-        });
+        }, isFormula);
         exec('<=', args, function(a, b) {
             return a <= b;
-        });
+        }, isFormula);
         exec('<>', args, function(a, b) {
             if (a instanceof Date && b instanceof Date) {
                 return a.getTime() !== b.getTime();
@@ -219,7 +226,7 @@ module.exports = function Exp(formula) {
                 return false;
             }
             return a !== b;
-        });
+        }, isFormula);
         exec('=', args, function(a, b) {
             if (a instanceof Date && b instanceof Date) {
                 return a.getTime() === b.getTime();
@@ -234,12 +241,13 @@ module.exports = function Exp(formula) {
                 return true;
             }
             return a === b;
-        });
+        }, isFormula);
         if (args.length == 1) {
             if (typeof(args[0].calc) !== 'function') {
                 return args[0];
             }
             else {
+                // console.log('formula.sheet_name: ' + formula.sheet_name + ', formula.name: ' + formula.name + ', formula.cell.f: ' + formula.cell.f + "\n");
                 return args[0].calc();
             }
         }
